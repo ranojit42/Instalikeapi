@@ -5,54 +5,59 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Insta Liker is Active! Use /auto?user=USERNAME&pass=PASSWORD&url=POST_URL"
+    return "✅ API is Ready! Use /like?sid=SESSION_ID&url=POST_URL"
 
-@app.route('/auto')
-def auto_like():
-    user = request.args.get('user')
-    pw = request.args.get('pass')
+@app.route('/like')
+def like_post():
+    # ইউজার থেকে ডাটা নেওয়া
+    sid = request.args.get('sid')
     post_url = request.args.get('url')
 
-    if not all([user, pw, post_url]):
-        return jsonify({"error": "Missing params"}), 400
+    # যদি ডাটা মিসিং থাকে
+    if not sid or not post_url:
+        return jsonify({
+            "status": "error",
+            "message": "Please provide both 'sid' (Session ID) and 'url' (Post Link)"
+        }), 400
 
     try:
-        session = requests.Session()
-        # CSRF হ্যান্ডেল করার নিরাপদ উপায়
-        res = session.get('https://www.instagram.com/')
-        csrf = session.cookies.get('csrftoken', 'en') 
-        
-        login_url = 'https://www.instagram.com/accounts/login/ajax/'
-        login_data = {
-            'username': user, 
-            'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:1720000000:{pw}',
-            'queryParams': "{}",
-            'optIntoOneTap': 'false'
-        }
-        headers = {
-            'X-CSRFToken': csrf, 
-            'X-Requested-With': 'XMLHttpRequest',
-            'Referer': 'https://www.instagram.com/',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        login_res = session.post(login_url, data=login_data, headers=headers)
-        
-        if login_res.status_code == 200 and login_res.json().get('authenticated'):
-            # শর্টকোড বের করা
-            shortcode = post_url.split('/')[-2] if post_url.endswith('/') else post_url.split('/')[-1]
-            like_url = f"https://www.instagram.com/api/v1/web/likes/{shortcode}/like/"
-            
-            # নতুন CSRF দিয়ে লাইক দেওয়া
-            headers['X-CSRFToken'] = session.cookies.get('csrftoken', csrf)
-            headers['X-IG-App-ID'] = "936619743392459"
-            
-            like_res = session.post(like_url, headers=headers)
-            return jsonify({"status": "success", "message": f"Liked by {user}"})
+        # লিঙ্ক থেকে পোস্টের আইডি (Shortcode) বের করা
+        if 'reels/' in post_url:
+            shortcode = post_url.split('reels/')[1].split('/')[0]
+        elif 'p/' in post_url:
+            shortcode = post_url.split('p/')[1].split('/')[0]
         else:
-            return jsonify({"status": "failed", "message": "Login Failed. Check User/Pass or 2FA."})
+            shortcode = post_url.split('/')[-2] if post_url.endswith('/') else post_url.split('/')[-1]
+
+        like_url = f"https://www.instagram.com/api/v1/web/likes/{shortcode}/like/"
+        
+        # ইনস্টাগ্রামের জন্য রিকোয়েস্ট হেডাস
+        headers = {
+            "cookie": f"sessionid={sid}",
+            "x-csrftoken": "en",
+            "x-ig-app-id": "936619743392459",
+            "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15",
+            "x-requested-with": "XMLHttpRequest",
+            "referer": "https://www.instagram.com/"
+        }
+        
+        # লাইক পাঠানোর কমান্ড
+        response = requests.post(like_url, headers=headers)
+        
+        return jsonify({
+            "status": "success",
+            "instagram_response": response.json()
+        })
 
     except Exception as e:
-        return jsonify({"error": str(e)})
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
-# Vercel-এর জন্য বাড়তি হ্যান্ডলার দরকার নেই যদি vercel.json ঠিক থাকে
+# Vercel এর জন্য রান করার নিয়ম
+def handler(event, context):
+    return app(event, context)
+
+if __name__ == '__main__':
+    app.run(debug=True)
